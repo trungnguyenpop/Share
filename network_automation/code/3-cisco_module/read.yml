@@ -1,0 +1,14 @@
+---
+- hosts: ios
+  gather_facts: no
+  tasks:
+    - name: run multiple commands on remote nodes
+      ios_command:
+        commands:
+          - show version # index 0 in the result
+          - show ip interface brief # index 1 in the result
+      register: result
+
+    - name: print out the result
+      debug:
+        var: result.stdout_lines[0] # Use result.stdout-lines to get a list of lines instead of a single string and select the index that you want to print out

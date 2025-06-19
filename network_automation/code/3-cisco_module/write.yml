@@ -1,0 +1,49 @@
+---
+- hosts: ios
+  gather_facts: no
+  tasks:
+    - name: Access-list configuration
+      cisco.ios.ios_acls:
+        config:
+          - afi: ipv4
+            acls:
+              - name: std_acl
+                acl_type: standard
+                aces:
+                  - grant: deny
+                    source:
+                      address: 192.168.1.200
+                  - grant: deny
+                    source:
+                      address: 192.168.2.0
+                      wildcard_bits: 0.0.0.255
+              - name: 110
+                aces:
+                  - sequence: 10
+                    protocol_options:
+                      icmp:
+                        traceroute: true
+                    source:
+                      address: 192.168.3.0
+                      wildcard_bits: 255.255.255.0
+                    destination:
+                      any: true
+                    grant: permit
+                  - grant: deny
+                    protocol_options:
+                      tcp:
+                        ack: true
+                    source:
+                      host: 198.51.100.0
+                    destination:
+                      host: 198.51.110.0
+                      port_protocol:
+                        eq: telnet
+
+    - name: Configurable backup path
+      cisco.ios.ios_config:
+        src: ios_template.j2
+        backup: yes
+        backup_options:
+          filename: backup.cfg
+          dir_path: ./
