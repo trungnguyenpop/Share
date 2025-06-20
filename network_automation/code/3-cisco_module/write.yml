@@ -39,6 +39,7 @@
                       host: 198.51.110.0
                       port_protocol:
                         eq: telnet
+        state: replaced
 
     - name: Configurable backup path
       cisco.ios.ios_config:
