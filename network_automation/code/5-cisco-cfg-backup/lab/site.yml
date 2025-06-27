@@ -1,0 +1,180 @@
+---
+- name: Create cfg backup and check GitLab for existing file
+  # This playbook is designed to backup the configuration of Cisco IOS devices and manage the backup
+  # files in a GitLab repository. It retrieves the configuration from the devices, checks if the file
+  # already exists in the GitLab repository, and either creates a new file or updates the existing one.
+  # The playbook uses the `ios_config` module to backup the configuration and the `uri` module to interact with the GitLab API.
+  # The playbook requires the `cisco.ios` collection for the `ios_config` module and the `jmespath` library for JSON querying.
+  # Ensure you have the necessary permissions and access tokens for the GitLab repository.
+  # The playbook also uses Ansible Vault to encrypt sensitive data such as the GitLab access token.
+  # The playbook is structured to run on a group of devices defined in the `ios` group in the Ansible inventory.
+  # The playbook will create a backup of the configuration file for each device and push it to the GitLab repository.
+  hosts: ios
+  gather_facts: no
+  tasks:
+    - name: Get cfg file content from remote node
+      ios_config:
+        backup: yes
+        backup_options:
+          filename: "{{ inventory_hostname }}.cfg"
+          dir_path: ./
+
+    - name: Read cfg file content
+      set_fact:
+        file_content: "{{ item }}"
+      with_file:
+        - "{{ inventory_hostname }}.cfg"
+      no_log: true # Prevent sensitive data from being logged if you need to print debug info change this to false.
+
+    - name: Get the repository file tree
+      uri:
+        url: "https://gitlab.com/api/v4/projects/{{ hostvars['localhost']['gitlab_project_id'] }}/repository/tree?ref={{ hostvars['localhost']['gitlab_branch'] }}&per_page=100&page=1"
+        body_format: json
+        validate_certs: no
+        status_code: 200
+        return_content: yes
+        headers:
+          Private-Token: "{{ hostvars['localhost']['gitlab_access_token'] }}"
+      register: response
+      delegate_to: localhost
+    #- debug:
+    #    var: response.json
+    
+    - name: Get project files # get the list of files in the GitLab repository to check if the file already exists to determine the commit action create or update
+      # This requires the jmespath library to be installed on the Ansible control node.
+      # If you don't have it installed, you can install it using pip:
+      # pip install jmespath
+      set_fact:
+        project_files: "{{ response.json | json_query('[].name') }}"
+        file_name: "{{ inventory_hostname }}.cfg"
+    #- debug:
+    #    var: project_files
+    
+    - name: Set commit action as create
+      set_fact:
+        commit_action: create
+      when: file_name not in project_files
+    - name: Set commit action as update
+      set_fact:
+        commit_action: update
+      when: file_name in project_files
+
+    - name: Get cfg file content from GitLab # Fetch the content of the configuration file from the GitLab repository if it exists
+      uri:
+        url: "https://gitlab.com/api/v4/projects/{{ hostvars['localhost']['gitlab_project_id'] }}/repository/files/{{ file_name | urlencode }}/raw?ref={{ hostvars['localhost']['gitlab_branch'] }}"
+        body_format: json
+        validate_certs: no
+        status_code: 200, 404
+        return_content: yes
+        headers:
+          Private-Token: "{{ hostvars['localhost']['gitlab_access_token'] }}"
+      register: response
+      delegate_to: localhost
+      when: commit_action == "update"
+    #- debug:
+    #    var: response.content 
+
+    - name: Save file content from GitLab # Store the content of the configuration file fetched from GitLab if it exists
+      set_fact:
+        file_content_in_gitlab: "{{ response.content }}"
+      when: commit_action == "update"
+    #- debug:
+    #    var: file_content_in_gitlab     
+
+    - name: create action dict # Create a dictionary to hold the action details for the commit      
+      set_fact: 
+        action_dict: # This dictionary will be used to specify the action to be taken in the GitLab repository
+          action: "{{ commit_action }}" # The action can be either 'create' or 'update'
+          file_path: "{{ inventory_hostname }}.cfg" # The path of the file in the GitLab repository
+          content: "{{ file_content }}" # The content of the file to be committed
+      when: commit_action == "create" or (commit_action == "update" and file_content_in_gitlab != file_content)
+    
+    - name: create empty dict # Create an empty dictionary if the file content in GitLab is the same as the local content
+      set_fact:
+        action_dict: {}
+      when: commit_action == "update" and file_content_in_gitlab == file_content
+          
+    # - name: Push cfg file content to GitLab
+    #   uri:
+    #     url: "https://gitlab.com/api/v4/projects/{{ hostvars['localhost']['gitlab_project_id'] }}/repository/commits"
+    #     method: POST
+    #     body_format: json
+    #     validate_certs: no
+    #     status_code: 201
+    #     return_content: yes
+    #     headers:
+    #       Private-Token: "{{ hostvars['localhost']['gitlab_access_token'] }}"
+    #     body:
+    #       branch: "{{ hostvars['localhost']['gitlab_branch'] }}"
+    #       commit_message: "Backup configuration for {{ inventory_hostname }}"
+    #       actions:
+    #         - action: "{{ commit_action }}"
+    #           file_path: "{{ inventory_hostname }}.cfg"
+    #           content: "{{ file_content }}"
+    #   register: response
+    #   delegate_to: localhost
+    #   vars:
+    #     ansible_connection: local
+    
+    - name: remove local cfg files
+      file:
+       path: "{{ inventory_hostname }}.cfg"
+       state: absent
+
+- name: Push to gitlab # This playbook is designed to push the configuration files created in the previous play to a GitLab repository.
+  # It collects the action dictionaries from all devices in the 'ios' group and sends them
+  # to the GitLab API to create or update the files in the repository.
+  # The playbook uses the `uri` module to interact with the GitLab API and
+  # requires the `cisco.ios` collection for the `ios_config` module.
+  # Ensure you have the necessary permissions and access tokens for the GitLab repository.
+  # The playbook is structured to run on the localhost, which acts as the control node
+  # that pushes the configuration files to the GitLab repository.
+  # The playbook will create a list of actions to be performed and push them to the
+  # GitLab repository as a commit.
+  # The playbook requires the `jmespath` library to be installed on the Ansible control node.
+  # If you don't have it installed, you can install it using pip:
+  # pip install jmespath
+  # The playbook will create a commit in the GitLab repository with the configuration files
+  # for each device in the 'ios' group.
+  # The playbook will only push the files that have been created or updated in the previous play.
+  # The playbook will not push empty action dictionaries, ensuring that only relevant changes are pushed to the repository. 
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create action list
+      set_fact:
+        action_list: "{{ action_list | default([]) + [ hostvars[item].action_dict ] }}"
+      loop: "{{ groups['ios'] }}"
+      when: hostvars[item].action_dict != {}      
+    # - name: debug
+    #   debug:
+    #     var: action_list
+    #   when: action_list is defined
+    
+    - name: Push cfg file content to GitLab
+      uri:
+        url: "https://gitlab.com/api/v4/projects/{{ hostvars['localhost']['gitlab_project_id'] }}/repository/commits"
+        method: POST
+        body_format: json
+        validate_certs: no
+        status_code: 201
+        return_content: yes
+        headers:
+          Private-Token: "{{ hostvars['localhost']['gitlab_access_token'] }}"
+        body:
+          branch: "{{ hostvars['localhost']['gitlab_branch'] }}"
+          commit_message: "Backup configuration for {{ inventory_hostname }}"
+          actions: "{{ action_list }}"
+      register: response
+      delegate_to: localhost
+      when: action_list is defined
+      # Note: The `delegate_to: localhost` is used to run this task on the control node (localhost),
+      # which is where the GitLab API requests are made. This is necessary because the
+      # `uri` module interacts with the GitLab API, and it should be executed on the control node
+      # rather than on the remote devices in the 'ios' group.
+      # If you want to run this task on the control node, you can uncomment the
+      # `vars` section below to specify the connection type as local.
+      # If you want to run this task on the control node, you can uncomment the
+      # `vars` section below to specify the connection type as local. 
+      # vars:
+      #   ansible_connection: local

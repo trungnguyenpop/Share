@@ -1,0 +1,6 @@
+- name: verify vars on localhost
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - debug:
+        msg: "GitLab project ID is {{ gitlab_project_id }}"
