@@ -1,0 +1,33 @@
+---
+- name: config device with template
+  hosts: ios
+  gather_facts: no
+  tasks:
+    - name: template cli
+      cisco.ios.ios_config:
+        src: ios_template.j2
+        save_when: modified
+
+# if the cisco device asking for confirmation during write memory then use the below task
+    # - name: Detect if 'write memory' needs confirmation
+    #   cisco.ios.ios_command:
+    #     commands:
+    #       - "write memory"
+    #   register: wr_output
+    #   ignore_errors: yes
+
+    # - name: Debug WR output
+    #   debug:
+    #     var: wr_output.stdout_lines
+
+    # - name: Force save config if 'write memory' failed
+    #   cisco.ios.ios_command:
+    #     commands:
+    #       - "write memory\n\n"
+    #   when: wr_output.failed
+
+    # - name: Fallback to 'copy running-config startup-config'
+    #   cisco.ios.ios_command:
+    #     commands:
+    #       - "copy running-config startup-config\n\n"
+    #   when: wr_output.failed
